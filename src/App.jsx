@@ -1,6 +1,31 @@
 import { useMemo, useRef, useState } from 'react';
 
 const DEFAULT_CSV_URL = '';
+const DEFAULT_PAGE_SIZE = 10;
+
+const ALLOWED_COLUMNS = [
+  'Ad ID',
+  'Campaign Concept',
+  'Impressions',
+  'Clicks',
+  'CTR',
+  'Cost',
+  'Revenue',
+  'Profit',
+  'Profit %',
+  'CPC',
+  'RPC',
+  'RPA',
+  'CPM',
+  'RPM',
+  'Sell Clicks',
+  'Sell RPC',
+  'Conversions',
+  'Frequency',
+  'Reach',
+  'CPA',
+  'CVR',
+];
 
 function parseCsvLine(line) {
   const result = [];
@@ -59,9 +84,12 @@ function parseCsv(text) {
 }
 
 function isNumericColumn(rows, key) {
-  if (key === 'video_url') return false;
+  if (key === 'video_url' || key === 'id') return false;
 
-  const values = rows.map((row) => row[key]).filter((value) => `${value}`.trim() !== '');
+  const values = rows
+    .map((row) => `${row[key] ?? ''}`.trim())
+    .filter((value) => value !== '' && value !== '-');
+
   if (values.length === 0) return false;
 
   return values.every((value) => !Number.isNaN(Number(value)));
@@ -75,38 +103,60 @@ export default function App() {
   const [search, setSearch] = useState('');
   const [sortColumn, setSortColumn] = useState('');
   const [sortDirection, setSortDirection] = useState('asc');
+  const [pageSize, setPageSize] = useState(DEFAULT_PAGE_SIZE);
+  const [visibleCount, setVisibleCount] = useState(DEFAULT_PAGE_SIZE);
+  const [openMetadataIds, setOpenMetadataIds] = useState({});
 
   const videoRefs = useRef({});
 
-  const numericColumns = useMemo(() => {
+  const availableColumns = useMemo(() => {
     if (rows.length === 0) return [];
-    return Object.keys(rows[0]).filter((key) => isNumericColumn(rows, key));
+    return ALLOWED_COLUMNS.filter((key) => key in rows[0]);
   }, [rows]);
 
   const filteredAndSortedRows = useMemo(() => {
     const term = search.trim().toLowerCase();
 
     let filtered = rows;
+
     if (term) {
       filtered = rows.filter((row) =>
-        Object.values(row).some((value) => `${value}`.toLowerCase().includes(term))
+        ['video_url', ...availableColumns].some((column) =>
+          `${row[column] ?? ''}`.toLowerCase().includes(term)
+        )
       );
     }
 
     if (sortColumn) {
-      filtered = [...filtered].sort((a, b) => {
-        const aValue = Number(a[sortColumn]);
-        const bValue = Number(b[sortColumn]);
+      const numericSort = isNumericColumn(rows, sortColumn);
 
-        if (sortDirection === 'asc') {
-          return aValue - bValue;
+      filtered = [...filtered].sort((a, b) => {
+        const rawA = `${a[sortColumn] ?? ''}`.trim();
+        const rawB = `${b[sortColumn] ?? ''}`.trim();
+
+        // keep "-" visible and sorted to the end
+        if (rawA === '-' && rawB === '-') return 0;
+        if (rawA === '-') return 1;
+        if (rawB === '-') return -1;
+
+        if (numericSort) {
+          const aNum = Number(rawA);
+          const bNum = Number(rawB);
+          return sortDirection === 'asc' ? aNum - bNum : bNum - aNum;
         }
-        return bValue - aValue;
+
+        const comparison = rawA.localeCompare(rawB, undefined, { sensitivity: 'base' });
+        return sortDirection === 'asc' ? comparison : -comparison;
       });
     }
 
     return filtered;
-  }, [rows, search, sortColumn, sortDirection]);
+  }, [rows, search, sortColumn, sortDirection, availableColumns]);
+
+  const visibleRows = useMemo(
+    () => filteredAndSortedRows.slice(0, visibleCount),
+    [filteredAndSortedRows, visibleCount]
+  );
 
   const loadCsv = async () => {
     setError('');
@@ -120,7 +170,10 @@ export default function App() {
 
       const csvText = await response.text();
       const parsedRows = parseCsv(csvText);
+
       setRows(parsedRows);
+      setOpenMetadataIds({});
+      setVisibleCount(pageSize);
 
       if (sortColumn && !parsedRows[0]?.[sortColumn]) {
         setSortColumn('');
@@ -150,15 +203,17 @@ export default function App() {
     });
   };
 
+  const toggleMetadata = (id) => {
+    setOpenMetadataIds((prev) => ({ ...prev, [id]: !prev[id] }));
+  };
+
   return (
     <main className="container">
       <h1>Video Review App</h1>
-      <p className="subtitle">
-        Paste a public Google Sheets CSV URL, then browse and control all videos in one place.
-      </p>
 
       <section className="panel">
         <label htmlFor="csvUrl">Google Sheets CSV URL</label>
+
         <div className="url-row">
           <input
             id="csvUrl"
@@ -187,31 +242,55 @@ export default function App() {
         <div className="filters">
           <input
             type="text"
-            placeholder="Search all metadata..."
+            placeholder="Search selected columns..."
             value={search}
             onChange={(event) => setSearch(event.target.value)}
           />
-          <select value={sortColumn} onChange={(event) => setSortColumn(event.target.value)}>
-            <option value="">Sort by numeric column</option>
-            {numericColumns.map((column) => (
-              <option key={column} value={column}>
-                {column}
-              </option>
-            ))}
-          </select>
-          <select value={sortDirection} onChange={(event) => setSortDirection(event.target.value)}>
-            <option value="asc">Ascending</option>
-            <option value="desc">Descending</option>
-          </select>
+
+          <label>
+            Sort by
+            <select value={sortColumn} onChange={(event) => setSortColumn(event.target.value)}>
+              <option value="">Select column</option>
+              {availableColumns.map((column) => (
+                <option key={column} value={column}>
+                  {column}
+                </option>
+              ))}
+            </select>
+          </label>
+
+          <label>
+            Direction
+            <select value={sortDirection} onChange={(event) => setSortDirection(event.target.value)}>
+              <option value="asc">Ascending</option>
+              <option value="desc">Descending</option>
+            </select>
+          </label>
+
+          <label>
+            Load at once
+            <input
+              type="number"
+              min="1"
+              step="1"
+              value={pageSize}
+              onChange={(event) => {
+                const next = Math.max(1, Number(event.target.value) || DEFAULT_PAGE_SIZE);
+                setPageSize(next);
+                setVisibleCount(next);
+              }}
+            />
+          </label>
         </div>
       </section>
 
       {error ? <p className="error">{error}</p> : null}
 
       <section className="cards-grid">
-        {filteredAndSortedRows.map((row) => {
-          const { id, video_url: videoUrl, ...metadata } = row;
+        {visibleRows.map((row) => {
+          const { id, video_url: videoUrl } = row;
           const hasVideo = Boolean(videoUrl && videoUrl.trim());
+          const isMetadataOpen = Boolean(openMetadataIds[id]);
 
           return (
             <article className="card" key={id}>
@@ -234,22 +313,30 @@ export default function App() {
                 <div className="video-error">Missing video URL in this row.</div>
               )}
 
-              <dl className="metadata">
-                <div className="metadata-item">
-                  <dt>video_url</dt>
-                  <dd>{videoUrl || 'N/A'}</dd>
-                </div>
-                {Object.entries(metadata).map(([key, value]) => (
-                  <div className="metadata-item" key={key}>
-                    <dt>{key}</dt>
-                    <dd>{value || 'N/A'}</dd>
-                  </div>
-                ))}
-              </dl>
+              <button className="info-btn" onClick={() => toggleMetadata(id)}>
+                {isMetadataOpen ? 'Hide info' : 'i'}
+              </button>
+
+              {isMetadataOpen ? (
+                <dl className="metadata">
+                  {availableColumns.map((key) => (
+                    <div className="metadata-item" key={key}>
+                      <dt>{key}</dt>
+                      <dd>{row[key] || '-'}</dd>
+                    </div>
+                  ))}
+                </dl>
+              ) : null}
             </article>
           );
         })}
       </section>
+
+      {filteredAndSortedRows.length > visibleRows.length ? (
+        <div className="load-more-wrap">
+          <button onClick={() => setVisibleCount((count) => count + pageSize)}>Load more</button>
+        </div>
+      ) : null}
 
       {rows.length > 0 && filteredAndSortedRows.length === 0 ? (
         <p className="empty-state">No rows matched your search.</p>
