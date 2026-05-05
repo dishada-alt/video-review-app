@@ -9,13 +9,13 @@ The CSV must include a required `video_url` column. Any other columns (for examp
 - Paste a public Google Sheets CSV URL.
 - Fetch and parse CSV data in the browser (no backend).
 - Render each row as a card with an HTML `<video>` player.
-- Show only selected ad-performance columns using an info toggle button.
+- Show all row metadata under each video.
 - Global controls: **Play All**, **Pause All**, **Reset All**.
 - Videos are muted by default to allow simultaneous playback.
-- Text search filter across selected columns.
+- Text search filter across all row values.
 - Numeric sorting with ascending/descending order.
-- Graceful handling of missing video URLs and "-" values.
-- Responsive card layout with configurable batch loading (default 10).
+- Graceful handling of missing video URLs.
+- Responsive card layout.
 
 ## 1) Install dependencies
 
